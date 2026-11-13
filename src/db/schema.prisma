@@ -1,0 +1,276 @@
+// Prisma Schema for Clinical Nutrition SaaS Multi-Tenant Engine
+// Data model supporting multi-tenant isolation, patient anthropometrics,
+// deterministic calculations, AI logs, and versioned meal plan prescriptions.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum BiologicalSex {
+  MALE
+  FEMALE
+}
+
+enum ActivityLevel {
+  SEDENTARY
+  LIGHT
+  MODERATE
+  HEAVY
+  EXTREME
+}
+
+enum NutritionalGoal {
+  WEIGHT_LOSS
+  MAINTENANCE
+  HYPERTROPHY
+  CLINICAL_REHAB
+}
+
+enum PlanStatus {
+  DRAFT
+  APPROVED
+  ARCHIVED
+}
+
+model ClinicTenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patients         Patient[]
+  foodCatalogs     FoodCatalog[]
+  mealPlans        MealPlan[]
+  aiLogs           AiGenerationLog[]
+  nutritionValidations NutritionValidation[]
+
+  @@map("clinic_tenants")
+}
+
+model Patient {
+  id         String        @id @default(uuid())
+  tenantId   String
+  name       String
+  email      String?
+  age        Int
+  sex        BiologicalSex
+  weightKg   Float
+  heightCm   Float
+  deletedAt  DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  tenant             ClinicTenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  nutritionProfiles  NutritionProfile[]
+  mealPlans          MealPlan[]
+  patientAllergies   PatientAllergy[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("patients")
+}
+
+model NutritionProfile {
+  id                String          @id @default(uuid())
+  patientId         String
+  tenantId          String
+  activityLevel     ActivityLevel
+  goal              NutritionalGoal
+  calculationMethod String          @default("mifflin_st_jeor")
+  createdAt         DateTime        @default(now())
+
+  patient            Patient              @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  energyCalculations EnergyCalculation[]
+  macroTargets       MacroTarget[]
+
+  @@index([patientId, tenantId])
+  @@map("nutrition_profiles")
+}
+
+model EnergyCalculation {
+  id                 String   @id @default(uuid())
+  nutritionProfileId String
+  getKcal            Float
+  prescribedVETKcal  Float
+  caloricDeltaKcal   Float
+  deltaPercentage    Float
+  createdAt          DateTime @default(now())
+
+  profile NutritionProfile @relation(fields: [nutritionProfileId], references: [id], onDelete: Cascade)
+
+  @@map("energy_calculations")
+}
+
+model MacroTarget {
+  id                 String   @id @default(uuid())
+  nutritionProfileId String
+  calculationType    String   @default("percentage")
+  carbohydratesG     Float
+  carbohydratesPct   Float
+  proteinG           Float
+  proteinPct         Float
+  proteinGramsPerKg  Float
+  lipidsG            Float
+  lipidsPct          Float
+  totalEnergyKcal    Float
+  createdAt          DateTime @default(now())
+
+  profile NutritionProfile @relation(fields: [nutritionProfileId], references: [id], onDelete: Cascade)
+
+  @@map("macro_targets")
+}
+
+model FoodSource {
+  id          String   @id @default(uuid())
+  name        String   @unique // TACO, TBCA, USDA, CLINIC_CUSTOM
+  description String?
+  version     String?
+
+  foods FoodCatalog[]
+
+  @@map("food_sources")
+}
+
+model FoodCatalog {
+  id                   String   @id @default(uuid())
+  tenantId             String?  // null for global TACO/TBCA, filled for custom clinic foods
+  foodSourceId         String
+  name                 String
+  category             String
+  referenceWeightGrams Float    @default(100.0)
+  energyKcal           Float
+  carbohydratesG       Float
+  proteinG             Float
+  lipidsG              Float
+  fiberG               Float
+  sodiumMg             Float
+  allergens            String[] // milk, egg, peanut, etc.
+  containsGluten       Boolean  @default(false)
+  containsLactose      Boolean  @default(false)
+  isVegetarian         Boolean  @default(true)
+  isVegan              Boolean  @default(true)
+  deletedAt            DateTime?
+
+  tenant ClinicTenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  source FoodSource   @relation(fields: [foodSourceId], references: [id])
+
+  mealPlanFoods MealPlanFood[]
+
+  @@index([tenantId])
+  @@index([name])
+  @@map("food_catalog")
+}
+
+model PatientAllergy {
+  id          String   @id @default(uuid())
+  patientId   String
+  allergen    String
+  intolerance String?
+  severity    String   @default("high")
+  createdAt   DateTime @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("patient_allergies")
+}
+
+model MealPlan {
+  id               String     @id @default(uuid())
+  patientId        String
+  tenantId         String
+  planName         String
+  version          Int        @default(1)
+  status           PlanStatus @default(DRAFT)
+  targetEnergyKcal Float
+  targetCarbsG     Float
+  targetProteinG   Float
+  targetLipidsG    Float
+  recalcEnergyKcal Float
+  recalcCarbsG     Float
+  recalcProteinG   Float
+  recalcLipidsG    Float
+  deletedAt        DateTime?
+  approvedAt       DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  patient              Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  tenant               ClinicTenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  meals                MealPlanMeal[]
+  nutritionValidations NutritionValidation[]
+
+  @@index([patientId, tenantId])
+  @@index([tenantId, status])
+  @@map("meal_plans")
+}
+
+model MealPlanMeal {
+  id         String   @id @default(uuid())
+  mealPlanId String
+  mealName   String
+  time       String   @default("08:00")
+  order      Int      @default(1)
+  targetKcal Float
+
+  mealPlan MealPlan       @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  foods    MealPlanFood[]
+
+  @@map("meal_plan_meals")
+}
+
+model MealPlanFood {
+  id             String @id @default(uuid())
+  mealPlanMealId String
+  foodId         String
+  quantityGrams  Float
+  preparation    String?
+
+  mealMeal MealPlanMeal @relation(fields: [mealPlanMealId], references: [id], onDelete: Cascade)
+  food     FoodCatalog  @relation(fields: [foodId], references: [id])
+
+  @@map("meal_plan_foods")
+}
+
+model NutritionValidation {
+  id                    String   @id @default(uuid())
+  mealPlanId            String
+  tenantId              String
+  isValid               Boolean
+  energyDeltaPct        Float
+  carbsDeltaPct         Float
+  proteinDeltaPct       Float
+  lipidsDeltaPct        Float
+  allergensViolated     String[]
+  validationLog         String
+  createdAt             DateTime @default(now())
+
+  mealPlan MealPlan     @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  tenant   ClinicTenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, mealPlanId])
+  @@map("nutrition_validations")
+}
+
+model AiGenerationLog {
+  id               String   @id @default(uuid())
+  tenantId         String
+  patientId        String
+  modelUsed        String
+  attemptNumber    Int
+  status           String
+  errorMessage     String?
+  rawResponse      String?
+  createdAt        DateTime @default(now())
+
+  tenant ClinicTenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, patientId])
+  @@map("ai_generation_logs")
+}

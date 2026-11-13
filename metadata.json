@@ -1,0 +1,6 @@
+{
+  "name": "NutriEngine Pro - Motor de Cálculo & Prescrição Nutricional",
+  "description": "Motor determinístico de cálculo nutricional e gerador inteligente de cardápios com IA para Nutrição Clínica e Esportiva.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
